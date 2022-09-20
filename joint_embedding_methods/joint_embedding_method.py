@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 import pytorch_lightning as pl
 import torch
+import torch.nn.functional as F
 import torchmetrics
 from pl_bolts.optimizers import linear_warmup_decay
 from torch import nn
@@ -45,9 +46,9 @@ class JointEmbeddingMethod(pl.LightningModule, ABC):
         loss = self.head(out1, out2)
 
         with torch.no_grad():
-            self.backbone.eval()
+            self.encoder.eval()
             embeddings = self.encoder(eval_view)
-            self.backbone.train()
+            self.encoder.train()
         return loss, embeddings
 
     def on_train_epoch_start(self) -> None:
@@ -59,6 +60,8 @@ class JointEmbeddingMethod(pl.LightningModule, ABC):
         loss, embeddings = self(views)
 
         self.log_dict({"train_loss": loss})
+
+        embeddings = F.normalize(embeddings, dim=1)
 
         # TODO: replace the list with a pre-initialized tensor
         self._train_embeddings.append(embeddings.detach().cpu())

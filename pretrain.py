@@ -2,9 +2,9 @@ import os
 from argparse import ArgumentParser
 
 import pytorch_lightning as pl
-from pl_bolts.datamodules import CIFAR10DataModule, ImagenetDataModule
+from pl_bolts.datamodules import CIFAR10DataModule
 from pl_bolts.models.self_supervised.resnets import resnet18
-from pl_bolts.transforms.dataset_normalizations import cifar10_normalization, imagenet_normalization
+from pl_bolts.transforms.dataset_normalizations import cifar10_normalization
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger, CSVLogger
@@ -58,24 +58,23 @@ def get_arg_parser():
     return parser
 
 
-def get_pretraining_datamodule(args):
+def get_data(args):
     if args.dataset == 'cifar10':
         val_split = 5000
-        dm = CIFAR10DataModule(
+        datamodule = CIFAR10DataModule(
             data_dir=args.data_dir,
             batch_size=args.batch_size,
             num_workers=args.num_workers,
             val_split=val_split,
         )
 
-        args.input_height = dm.dims[-1]
+        # dataset_train_knn = datamodule.dataset_train
+
+        args.input_height = datamodule.dims[-1]
 
         normalization = cifar10_normalization()
         args.gaussian_blur = False
         args.jitter_strength = 0.5
-    elif args.dataset == 'imagenet':
-        dm = ImagenetDataModule(args, None)
-        normalization = imagenet_normalization()
     else:
         raise ValueError(f'Unknown dataset: {args.dataset}')
 
@@ -89,10 +88,12 @@ def get_pretraining_datamodule(args):
         input_height=args.input_height,
         normalize=normalization,
     )
-    dm.val_transforms = eval_transform
-    dm.train_transforms = MultiviewAndEvalTransform(AugmentationMultiviewTransform(view_transform), eval_transform)
+    # dataset_train_knn.transform = eval_transform
+    datamodule.val_transforms = eval_transform
+    datamodule.train_transforms = MultiviewAndEvalTransform(AugmentationMultiviewTransform(view_transform),
+                                                            eval_transform)
 
-    return dm
+    return datamodule
 
 
 def get_encoder(args):
@@ -118,7 +119,7 @@ def main():
     parser = get_arg_parser()
     args = parser.parse_args()
 
-    datamodule = get_pretraining_datamodule(args)
+    datamodule = get_data(args)
     encoder, encoder_output_dim = get_encoder(args)
     lit_module = SimSiam(
         encoder,
