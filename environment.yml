@@ -1,0 +1,29 @@
+name: dl
+
+channels:
+  - huggingface
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python
+
+  - matplotlib
+  - pandas
+
+  - pytorch
+  - torchvision
+  - cudatoolkit=11.3
+  #  - cpuonly
+
+  #  - transformers
+  - pytorch-lightning
+  - torchmetrics
+  - wandb
+
+  - pip
+  - pip:
+      - kaggle
+      - timm
+      - einops
