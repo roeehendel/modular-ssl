@@ -12,4 +12,4 @@
 #SBATCH --exclude=n-601
 
 #conda activate dl
-python pretrain.py --max_epochs=800 --accelerator=gpu --devices=4 --strategy=ddp --encoder=resnet
+python pretrain.py --max_epochs=800 --accelerator=gpu --devices=4 --strategy=ddp --method=simsiam --encoder_type=resnet

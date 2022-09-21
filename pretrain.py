@@ -1,3 +1,4 @@
+import argparse
 import os
 from argparse import ArgumentParser
 
@@ -12,6 +13,7 @@ from torch import nn
 
 from config import OUTPUTS_DIR
 from encoders.masked_vision_transformer import masked_vit_tiny
+from joint_embedding_methods.dino import DINO
 from joint_embedding_methods.joint_embedding_method import JointEmbeddingMethod
 from joint_embedding_methods.simsiam import SimSiam
 from transforms.multi_view.augmentation_multiview_transform import AugmentationMultiviewTransform
@@ -38,20 +40,24 @@ def get_arg_parser():
     # parser.add_argument("--jitter_strength", type=float, default=0.5, help="jitter strength")
 
     # Model
-    parser.add_argument("--encoder", type=str, default="resnet", help="The endoer model to use")
+    parser.add_argument("--encoder_type", type=str, default="resnet", help="The encoder model to use")
+
+    # Joint Embedding Method
+    parser.add_argument("--method", type=str, default="simsiam", help="The joint embedding method to use")
 
     # Training
     parser.add_argument("--num_workers", default=8, type=int, help="num of workers per GPU")
     parser.add_argument("--batch_size", default=128, type=int, help="batch size per gpu")
+    parser.set_defaults(check_val_every_n_epoch=2)
 
     # Optimization
-    parser.add_argument("--base_lr", default=0.06, type=float, help="base learning rate")
-    parser.add_argument("--momentum", default=0.9, type=float, help="optimizer momentum")
-    parser.add_argument("--weight_decay", default=5e-4, type=float, help="weight decay")
-    parser.add_argument("--warmup_epochs", default=0, type=int, help="number of warmup epochs")
+    # parser.add_argument("--base_lr", default=5e-4, type=float, help="base learning rate")
+    # parser.add_argument("--weight_decay", default=0.04, type=float, help="weight decay")
+    # parser.add_argument("--momentum", default=0.9, type=float, help="optimizer momentum")
+    # parser.add_argument("--warmup_epochs", default=10, type=int, help="number of warmup epochs")
 
-    # Model
-    pass
+    # Logging
+    parser.add_argument("--offline", action=argparse.BooleanOptionalAction)
 
     parser = JointEmbeddingMethod.add_model_specific_args(parser)
 
@@ -97,22 +103,63 @@ def get_data(args):
 
 
 def get_encoder(args):
-    if args.encoder == 'resnet':
+    if args.encoder_type == 'resnet':
         encoder = nn.Sequential(
             resnet18(first_conv=False, maxpool1=False, return_all_feature_maps=False),
             LambdaModule(lambda x: x[0]),
         )
-        output_dim = encoder[0].fc.in_features
-    elif args.encoder == 'vit':
+        encoder.output_dim = encoder[0].fc.in_features
+    elif args.encoder_type == 'vit':
         encoder = nn.Sequential(
             masked_vit_tiny(image_size=args.input_height, patch_size=2),
             LambdaModule(lambda x: x[:, 0, :]),
         )
-        output_dim = encoder[0].embed_dim
+        encoder.output_dim = encoder[0].embed_dim
     else:
         raise ValueError(f'Unknown dataset: {args.dataset}')
 
-    return encoder, output_dim
+    return encoder
+
+
+def get_lit_module(args, encoder):
+    if args.method == 'simsiam':
+        lit_module = SimSiam(
+            encoder,
+            encoder_output_dim=encoder.output_dim,
+            **args.__dict__,
+            # base_lr=args.base_lr,
+            # momentum=args.momentum,
+            # weight_decay=args.weight_decay,
+            # warmup_epochs=args.warmup_epochs,
+        )
+    elif args.method == 'dino':
+        lit_module = DINO(
+            encoder,
+            encoder_output_dim=encoder.output_dim,
+            **args.__dict__,
+            # base_lr=args.base_lr,
+            # weight_decay=args.weight_decay,
+            # warmup_epochs=args.warmup_epochs,
+        )
+    else:
+        raise ValueError(f'Unknown joint embedding method: {args.joint_embedding_method}')
+
+    return lit_module
+
+
+def get_loggers(args):
+    wandb_logger = WandbLogger(
+        project='joint-embedding',
+        name=f'pretrain-{args.dataset}-{args.method}-{args.encoder_type}',
+        save_dir=OUTPUTS_DIR,
+        offline=args.offline,
+    )
+    csv_logger = CSVLogger(
+        name='pretrain',
+        save_dir=os.path.join(OUTPUTS_DIR, 'csv')
+    )
+
+    return [wandb_logger, csv_logger]
 
 
 def main():
@@ -120,22 +167,10 @@ def main():
     args = parser.parse_args()
 
     datamodule = get_data(args)
-    encoder, encoder_output_dim = get_encoder(args)
-    lit_module = SimSiam(
-        encoder,
-        input_dim=encoder_output_dim,
-        base_lr=args.base_lr,
-        momentum=args.momentum,
-        weight_decay=args.weight_decay,
-        warmup_epochs=args.warmup_epochs,
-    )
+    encoder = get_encoder(args)
+    lit_module = get_lit_module(args, encoder)
 
-    wandb_logger = WandbLogger(
-        project='joint-embedding',
-        name=f'pretrain-{args.dataset}-{args.encoder}',
-        save_dir=OUTPUTS_DIR
-    )
-    csv_logger = CSVLogger(name='pretraining', save_dir=os.path.join(OUTPUTS_DIR, 'csv'))
+    loggers = get_loggers(args)
 
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
@@ -143,7 +178,7 @@ def main():
         args,
         default_root_dir=os.path.join(OUTPUTS_DIR, 'logs'),
         sync_batchnorm=True if int(args.devices) > 1 else False,
-        logger=[wandb_logger, csv_logger],
+        logger=loggers,
         callbacks=[lr_monitor],
     )
     trainer.fit(model=lit_module, datamodule=datamodule)
