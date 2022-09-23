@@ -1,3 +1,5 @@
+from typing import List
+
 import torch
 
 from transforms.multi_view.multiview_transform import MultiviewTransform
@@ -8,7 +10,7 @@ class PatchMaskingMultiviewTransform(MultiviewTransform):
         self.num_patches = num_patches
         self.mask_ratio = mask_ratio
 
-    def __call__(self, sample):
+    def __call__(self, sample) -> List:
         num_patches = self.num_patches
         num_keep = int(num_patches * (1 - self.mask_ratio))
 
@@ -18,4 +20,4 @@ class PatchMaskingMultiviewTransform(MultiviewTransform):
         idx_keep1 = idx_keep1.sort(dim=1)[0]
         idx_keep2 = idx_keep2.sort(dim=1)[0]
 
-        return (sample, idx_keep1), (sample, idx_keep2)
+        return [(sample, idx_keep1), (sample, idx_keep2)]

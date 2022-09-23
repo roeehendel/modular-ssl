@@ -1,0 +1,11 @@
+name: dl
+
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - pytorch
+  - torchvision
+  - cpuonly

@@ -16,10 +16,8 @@ from encoders.masked_vision_transformer import masked_vit_tiny
 from joint_embedding_methods.dino import DINO
 from joint_embedding_methods.joint_embedding_method import JointEmbeddingMethod
 from joint_embedding_methods.simsiam import SimSiam
-from transforms.multi_view.augmentation_multiview_transform import AugmentationMultiviewTransform
-from transforms.multiview_and_eval_transform import MultiviewAndEvalTransform
 from transforms.single_view.evaluation_transform import EvaluationTransform
-from transforms.single_view.simclr_transform import SimCLRTransform
+from transforms.train_and_eval_transform import TrainAndEvalTransform
 from utils.lambda_module import LambdaModule
 
 
@@ -40,7 +38,13 @@ def get_arg_parser():
     # parser.add_argument("--jitter_strength", type=float, default=0.5, help="jitter strength")
 
     # Model
-    parser.add_argument("--encoder_type", type=str, default="resnet", help="The encoder model to use")
+    parser.add_argument("--encoder_type", type=str, default="resnet", help="The encoder model to use",
+                        choices=["resnet", "vit", "maskvit"])
+    temp_args, _ = parser.parse_known_args()
+    if temp_args.encoder_type == 'vit':
+        parser.add_argument("--freeze_patch_embeddings", action=argparse.BooleanOptionalAction,
+                            help="Freeze the patch embeddings of the ViT encoder (as per MoCo-v3)")
+        parser.set_defaults(freeze_patch_embeddings=False)
 
     # Joint Embedding Method
     parser.add_argument("--method", type=str, default="simsiam", help="The joint embedding method to use")
@@ -59,12 +63,16 @@ def get_arg_parser():
     # Logging
     parser.add_argument("--offline", action=argparse.BooleanOptionalAction)
 
-    parser = JointEmbeddingMethod.add_model_specific_args(parser)
+    temp_args, _ = parser.parse_known_args()
+    if temp_args.method == 'simsiam':
+        parser = SimSiam.add_model_specific_args(parser)
+    elif temp_args.method == 'dino':
+        parser = DINO.add_model_specific_args(parser)
 
     return parser
 
 
-def get_data(args):
+def get_data(args, method_module: JointEmbeddingMethod):
     if args.dataset == 'cifar10':
         val_split = 5000
         datamodule = CIFAR10DataModule(
@@ -76,28 +84,23 @@ def get_data(args):
 
         # dataset_train_knn = datamodule.dataset_train
 
-        args.input_height = datamodule.dims[-1]
-
         normalization = cifar10_normalization()
         args.gaussian_blur = False
         args.jitter_strength = 0.5
     else:
         raise ValueError(f'Unknown dataset: {args.dataset}')
 
-    view_transform = SimCLRTransform(
+    branches_views_transform = method_module.branches_views_transform(
         input_height=args.input_height,
-        gaussian_blur=args.gaussian_blur,
-        jitter_strength=args.jitter_strength,
-        normalize=normalization,
+        normalization=normalization
     )
     eval_transform = EvaluationTransform(
         input_height=args.input_height,
-        normalize=normalization,
+        normalization=normalization,
     )
     # dataset_train_knn.transform = eval_transform
     datamodule.val_transforms = eval_transform
-    datamodule.train_transforms = MultiviewAndEvalTransform(AugmentationMultiviewTransform(view_transform),
-                                                            eval_transform)
+    datamodule.train_transforms = TrainAndEvalTransform(branches_views_transform, eval_transform)
 
     return datamodule
 
@@ -108,24 +111,33 @@ def get_encoder(args):
             resnet18(first_conv=False, maxpool1=False, return_all_feature_maps=False),
             LambdaModule(lambda x: x[0]),
         )
-        encoder.output_dim = encoder[0].fc.in_features
+        encoder.embedding_dim = encoder[0].fc.in_features
     elif args.encoder_type == 'vit':
+        from encoders.vision_transformer import vit_super_tiny
+        encoder = vit_super_tiny(img_size=args.input_height, patch_size=4)
+        encoder.embedding_dim = encoder.embed_dim
+
+        if args.freeze_patch_embeddings:
+            # freeze patch embedding as per MoCo-v3
+            encoder.patch_embed.requires_grad = False
+
+    elif args.encoder_type == 'maskvit':
         encoder = nn.Sequential(
-            masked_vit_tiny(image_size=args.input_height, patch_size=2),
+            masked_vit_tiny(img_size=args.input_height, patch_size=4),
             LambdaModule(lambda x: x[:, 0, :]),
         )
-        encoder.output_dim = encoder[0].embed_dim
+        encoder.embedding_dim = encoder[0].embed_dim
     else:
-        raise ValueError(f'Unknown dataset: {args.dataset}')
+        raise ValueError(f'Unknown encoder: {args.dataset}')
 
     return encoder
 
 
-def get_lit_module(args, encoder):
+def get_method(args, encoder) -> JointEmbeddingMethod:
     if args.method == 'simsiam':
         lit_module = SimSiam(
             encoder,
-            encoder_output_dim=encoder.output_dim,
+            encoder_embedding_dim=encoder.embedding_dim,
             **args.__dict__,
             # base_lr=args.base_lr,
             # momentum=args.momentum,
@@ -135,7 +147,7 @@ def get_lit_module(args, encoder):
     elif args.method == 'dino':
         lit_module = DINO(
             encoder,
-            encoder_output_dim=encoder.output_dim,
+            encoder_embedding_dim=encoder.embedding_dim,
             **args.__dict__,
             # base_lr=args.base_lr,
             # weight_decay=args.weight_decay,
@@ -150,7 +162,7 @@ def get_lit_module(args, encoder):
 def get_loggers(args):
     wandb_logger = WandbLogger(
         project='joint-embedding',
-        name=f'pretrain-{args.dataset}-{args.method}-{args.encoder_type}',
+        name=f'pretrain-{args.method}-{args.encoder_type}-{args.dataset}',
         save_dir=OUTPUTS_DIR,
         offline=args.offline,
     )
@@ -166,22 +178,27 @@ def main():
     parser = get_arg_parser()
     args = parser.parse_args()
 
-    datamodule = get_data(args)
+    args.input_height = {
+        'cifar10': 32,
+    }[args.dataset]
+
     encoder = get_encoder(args)
-    lit_module = get_lit_module(args, encoder)
+    method_module = get_method(args, encoder)
+    datamodule = get_data(args, method_module)
 
     loggers = get_loggers(args)
 
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
+    using_multiple_gpus = args.devices is not None and int(args.devices) > 1
     trainer = pl.Trainer.from_argparse_args(
         args,
         default_root_dir=os.path.join(OUTPUTS_DIR, 'logs'),
-        sync_batchnorm=True if int(args.devices) > 1 else False,
+        sync_batchnorm=using_multiple_gpus,
         logger=loggers,
         callbacks=[lr_monitor],
     )
-    trainer.fit(model=lit_module, datamodule=datamodule)
+    trainer.fit(model=method_module, datamodule=datamodule)
 
 
 if __name__ == '__main__':

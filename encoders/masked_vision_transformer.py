@@ -7,13 +7,13 @@ from utils.positional_embedding import get_2d_sincos_pos_embed
 
 
 class MaskedVisionTransformerEncoder(nn.Module):
-    def __init__(self, image_size=224, patch_size=16, in_chans=3,
+    def __init__(self, img_size=224, patch_size=16, in_chans=3,
                  embed_dim=768, depth=12, num_heads=12, mlp_ratio=4., qkv_bias=True, norm_layer=nn.LayerNorm):
         super().__init__()
 
         self.embed_dim = embed_dim
 
-        self.patch_embed = PatchEmbed(image_size, patch_size, in_chans, embed_dim)
+        self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
         self.num_patches = self.patch_embed.num_patches
 
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
@@ -90,29 +90,29 @@ class MaskedVisionTransformerEncoder(nn.Module):
         return x
 
 
-def masked_vit_tiny(image_size=224, patch_size=16, **kwargs):
+def masked_vit_tiny(img_size=224, patch_size=16, **kwargs):
     model = MaskedVisionTransformerEncoder(
-        image_size=image_size, patch_size=patch_size, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4., **kwargs
+        img_size=img_size, patch_size=patch_size, embed_dim=192, depth=12, num_heads=3, mlp_ratio=4., **kwargs
     )
     return model
 
 
-def masked_vit_small(image_size=224, patch_size=16, **kwargs):
+def masked_vit_small(img_size=224, patch_size=16, **kwargs):
     model = MaskedVisionTransformerEncoder(
-        image_size=image_size, patch_size=patch_size, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, **kwargs
+        img_size=img_size, patch_size=patch_size, embed_dim=384, depth=12, num_heads=6, mlp_ratio=4, **kwargs
     )
     return model
 
 
-def masked_vit_base(image_size=224, patch_size=16, **kwargs):
+def masked_vit_base(img_size=224, patch_size=16, **kwargs):
     model = MaskedVisionTransformerEncoder(
-        image_size=image_size, patch_size=patch_size, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, **kwargs
+        img_size=img_size, patch_size=patch_size, embed_dim=768, depth=12, num_heads=12, mlp_ratio=4, **kwargs
     )
     return model
 
 
-def masked_vit_large(image_size=224, patch_size=16, **kwargs):
+def masked_vit_large(img_size=224, patch_size=16, **kwargs):
     model = MaskedVisionTransformerEncoder(
-        image_size=image_size, patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, **kwargs
+        img_size=img_size, patch_size=patch_size, embed_dim=1024, depth=24, num_heads=16, mlp_ratio=4, **kwargs
     )
     return model

@@ -1,75 +1,112 @@
-import copy
+import argparse
+from typing import Optional
 
 import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from pl_bolts.optimizers import linear_warmup_decay
-from torch import nn
+from torch import nn, Tensor
 from torch.nn.init import trunc_normal_
-from torch.nn.utils.weight_norm import WeightNorm
 
 from joint_embedding_methods.joint_embedding_method import JointEmbeddingMethod
+from transforms.multi_view.branches_views_transform import BranchesViewsTransform
+from transforms.multi_view.iid_multiview_transform import IIDMultiviewTransform
+from transforms.single_view.simclr_transform import SimCLRTransform
+from utils.nn_module_deepcopy import copy_module_with_weight_norm
 
 
 class DINO(JointEmbeddingMethod):
-    def __init__(self, encoder: nn.Module, encoder_output_dim: int,
-                 out_dim: int = 65536, use_bn_in_head: bool = False, norm_last_layer: bool = True,
-                 teacher_start_temp: float = 0.04, teacher_temp: float = 0.07, teacher_temp_warmup_epochs: int = 30,
-                 teacher_momentum: float = 0.996,
-                 base_lr: float = 5e-2, weight_decay: float = 0.00, warmup_epochs: int = 0,
-                 # base_lr: float = 5e-4, weight_decay: float = 0.04, warmup_epochs: int = 10,
-                 **kwargs):
+    def __init__(self, encoder: nn.Module, **kwargs):
         super().__init__(encoder, **kwargs)
+
+        hparams = self.hparams
 
         self.student = nn.Sequential(
             encoder,
-            DINOHead(encoder_output_dim, out_dim, use_bn_in_head, norm_last_layer)
+            DINOHead(hparams.embedding_dim, hparams.out_dim, hparams.use_bn_in_head,
+                     hparams.norm_last_layer)
         )
         self.teacher = copy_module_with_weight_norm(self.student)
         # for p in self.teacher.parameters():
         #     p.requires_grad = False
 
         self.criterion = DINOLoss(
-            out_dim=out_dim,
-            ncrops=2,  # total number of crops = 2 global crops + local_crops_number
-            teacher_start_temp=teacher_start_temp,
-            teacher_temp=teacher_temp,
-            teacher_temp_warmup_epochs=teacher_temp_warmup_epochs
+            out_dim=hparams.out_dim,
+            ncrops=2 + hparams.n_crops,  # total number of crops = 2 global crops + local_crops_number
+            teacher_start_temp=hparams.teacher_start_temp,
+            teacher_temp=hparams.teacher_temp,
+            teacher_temp_warmup_epochs=hparams.teacher_temp_warmup_epochs
         )
 
         # niters_per_epoch = self.trainer.estimated_stepping_batches // self.trainer.max_epochs
         # self.momentum_schedule = cosine_scheduler(teacher_momentum, 1, self.trainer.max_epochs, niters_per_epoch,
         #                                           len(self.trainer.train_dataloader))
 
+    def branches_views_transform(self, input_height: int, normalization: Optional = None) -> BranchesViewsTransform:
+        hparams = self.hparams
+
+        view_transform = SimCLRTransform(
+            input_height=input_height,
+            gaussian_blur=hparams.gaussian_blur,
+            jitter_strength=hparams.jitter_strength,
+            normalize=normalization,
+            crop_scale=(0.5, 1.0)
+        )
+
+        multicrop_transform = SimCLRTransform(
+            input_height=input_height,
+            gaussian_blur=hparams.gaussian_blur,
+            jitter_strength=hparams.jitter_strength,
+            normalize=normalization,
+            crop_scale=(0.1, 0.5)
+        )
+
+        multiview_transform = IIDMultiviewTransform(view_transform, n_transforms=2)
+        multicrop_transforms = IIDMultiviewTransform(multicrop_transform, n_transforms=hparams.n_crops)
+
+        return BranchesViewsTransform(
+            shared_views_transforms=[multiview_transform],
+            branches_views_transforms=[[], [multicrop_transforms]],
+        )
+
     def training_step_end(self, step_output):
-        with torch.no_grad():
-            m = self._teacher_momentum()
-            for param_q, param_k in zip(self.student.parameters(), self.teacher.parameters()):
-                param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+        pass
+        # with torch.no_grad():
+        #     m = self._teacher_momentum()
+        #     for param_q, param_k in zip(self.student.parameters(), self.teacher.parameters()):
+        #         param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
 
     def _teacher_momentum(self):
         # TODO: implement cosine scheduler that goes from 0.996 to 1
         return self.hparams.teacher_momentum
 
-    def branch1(self, view):
-        return self.student(view)
+    def forward_branch(self, view: Tensor, branch_idx: int) -> Tensor:
+        if branch_idx == 0:
+            return self.student(view)
+        elif branch_idx == 1:
+            with torch.no_grad():
+                return self.teacher(view)
 
-    def branch2(self, view):
-        with torch.no_grad():
-            return self.teacher(view)
-
-    def head(self, out1, out2):
-        loss = self.criterion(out1, out2, self.current_epoch)
+    def forward_loss(self, branches_outputs: list[list[Tensor]]) -> Tensor:
+        student_output, teacher_output = branches_outputs
+        loss = self.criterion(student_output, teacher_output, self.current_epoch)
         return loss
 
     def configure_optimizers(self):
-        lr = self.hparams.base_lr * self.batch_size / 256
+        hparams = self.hparams
 
-        optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=self.hparams.weight_decay)
+        lr = hparams.base_lr * self.batch_size / 256
+
+        optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=hparams.weight_decay)
+        # optimizer = torch.optim.SGD(self.parameters(), lr=lr, momentum=hparams.momentum,
+        #                             weight_decay=hparams.weight_decay)
 
         total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = (self.hparams.warmup_epochs / self.trainer.max_epochs) * total_steps
+        warmup_steps = (hparams.warmup_epochs / self.trainer.max_epochs) * total_steps
+
+        # TODO: remove this !!!
+        # self.trainer.datamodule.dataset_train = Subset(self.trainer.datamodule.dataset_train, [0])
 
         return {
             "optimizer": optimizer,
@@ -82,6 +119,36 @@ class DINO(JointEmbeddingMethod):
                 "frequency": 1,
             }
         }
+
+    @staticmethod
+    def add_model_specific_args(parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        parser = parent_parser.add_argument_group("DINO")
+
+        # Augmentations
+        parser.add_argument("--gaussian_blur", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--jitter_strength", type=float, default=0.5)
+        parser.add_argument("--n_crops", type=int, default=0)
+        parser.set_defaults(gaussian_blur=False)
+
+        # Architecture
+        parser.add_argument("--out_dim", type=int, default=4096)
+        parser.add_argument("--use_bn_in_head", action=argparse.BooleanOptionalAction)
+        parser.add_argument("--norm_last_layer", action=argparse.BooleanOptionalAction)
+        parser.set_defaults(use_bn_in_head=False, norm_last_layer=True)
+
+        # Method
+        parser.add_argument("--teacher_start_temp", type=float, default=0.04)
+        parser.add_argument("--teacher_temp", type=float, default=0.07)
+        parser.add_argument("--teacher_temp_warmup_epochs", type=int, default=30)
+        parser.add_argument("--teacher_momentum", type=float, default=0.996)
+
+        # Optimizer
+        parser.add_argument("--base_lr", type=float, default=5e-4)
+        parser.add_argument("--weight_decay", type=float, default=0.04)
+        parser.add_argument("--warmup_epochs", type=int, default=10)
+        # parser.add_argument('--momentum', type=float, default=0.9)
+
+        return parent_parser
 
 
 class DINOHead(nn.Module):
@@ -142,31 +209,34 @@ class DINOLoss(nn.Module):
 
         self.register_buffer("center", torch.zeros(1, out_dim))
 
-    def forward(self, student_output, teacher_output, epoch):
+    def forward(self, student_output: list[Tensor], teacher_output: list[Tensor], epoch: int):
         """
         Cross-entropy between softmax outputs of the teacher and student networks.
         """
-        student_out = student_output / self.student_temp
-        student_out = student_out.chunk(self.ncrops)
+        student_output = torch.stack(student_output)
+        student_output = student_output / self.student_temp
+        student_output = list(student_output)
 
         # teacher centering and sharpening
         temp = self._teacher_temp(epoch)
-        teacher_out = F.softmax((teacher_output - self.center) / temp, dim=-1)
-        teacher_out = teacher_out.detach().chunk(2)
-
-        print(teacher_out.shape)
-        print(student_out.shape)
+        teacher_output_centered_sharpened = list(F.softmax((torch.stack(teacher_output) - self.center) / temp, dim=-1))
 
         total_loss = 0
         n_loss_terms = 0
-        for iq, q in enumerate(teacher_out):
-            for v in range(len(student_out)):
-                if v == iq:
+        for it, q in enumerate(teacher_output_centered_sharpened):
+            for iv, v in enumerate(student_output):
+                if iv == it:
                     # we skip cases where student and teacher operate on the same view
                     continue
-                loss = torch.sum(-q * F.log_softmax(student_out[v], dim=-1), dim=-1)
+                # print('teacher')
+                # print(q)
+                # print('student')
+                # print(torch.softmax(v, dim=-1))
+
+                loss = torch.sum(-q * F.log_softmax(v, dim=-1), dim=-1)
                 total_loss += loss.mean()
                 n_loss_terms += 1
+
         total_loss /= n_loss_terms
         self.update_center(teacher_output)
         return total_loss
@@ -185,25 +255,16 @@ class DINOLoss(nn.Module):
         """
         Update center used for teacher output.
         """
+        teacher_output = torch.cat(teacher_output)
         batch_center = torch.sum(teacher_output, dim=0, keepdim=True)
-        dist.all_reduce(batch_center)
-        batch_center = batch_center / (len(teacher_output) * dist.get_world_size())
+        world_size = 1
+        if dist.is_initialized():
+            dist.all_reduce(batch_center)
+            world_size = dist.get_world_size()
+        batch_center = batch_center / (len(teacher_output) * world_size)
 
         # ema update
         self.center = self.center * self.center_momentum + batch_center * (1 - self.center_momentum)
-
-
-def copy_module_with_weight_norm(original_module: nn.Module):
-    for module in original_module.modules():
-        for _, hook in module._forward_pre_hooks.items():
-            if isinstance(hook, WeightNorm):
-                delattr(module, hook.name)
-    copy_module = copy.deepcopy(original_module)
-    for module in original_module.modules():
-        for _, hook in module._forward_pre_hooks.items():
-            if isinstance(hook, WeightNorm):
-                hook(module, None)
-    return copy_module
 
 
 def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epochs=0, start_warmup_value=0):

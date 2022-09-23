@@ -1,14 +1,16 @@
+from typing import Optional
+
 from torchvision.transforms import transforms
 
 
 class EvaluationTransform:
-    def __init__(self, input_height: int = 224, normalize=None):
+    def __init__(self, input_height: int = 32, normalization: Optional = None):
         self.input_height = input_height
 
-        if normalize is None:
+        if normalization is None:
             self.final_transform = transforms.ToTensor()
         else:
-            self.final_transform = transforms.Compose([transforms.ToTensor(), normalize])
+            self.final_transform = transforms.Compose([transforms.ToTensor(), normalization])
 
         self.transform = transforms.Compose(
             [

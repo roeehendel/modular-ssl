@@ -8,7 +8,8 @@ class SimCLRTransform:
     """
 
     def __init__(
-            self, input_height: int = 224, gaussian_blur: bool = True, jitter_strength: float = 1.0, normalize=None
+            self, input_height: int = 224, gaussian_blur: bool = True, jitter_strength: float = 1.0, normalize=None,
+            crop_scale=(0.2, 1.0),
     ) -> None:
         self.jitter_strength = jitter_strength
         self.input_height = input_height
@@ -23,7 +24,7 @@ class SimCLRTransform:
         )
 
         data_transforms = [
-            transforms.RandomResizedCrop(size=self.input_height, scale=(0.2, 1.)),
+            transforms.RandomResizedCrop(size=self.input_height, scale=crop_scale),
             transforms.RandomHorizontalFlip(p=0.5),
             transforms.RandomApply([self.color_jitter], p=0.8),
             transforms.RandomGrayscale(p=0.2),
