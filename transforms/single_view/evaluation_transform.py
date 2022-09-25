@@ -1,6 +1,6 @@
 from typing import Optional
 
-from torchvision.transforms import transforms
+from torchvision.transforms import transforms, InterpolationMode
 
 
 class EvaluationTransform:
@@ -14,8 +14,8 @@ class EvaluationTransform:
 
         self.transform = transforms.Compose(
             [
-                # transforms.Resize(int(self.input_height * 1.1), interpolation=InterpolationMode.BICUBIC),
-                # transforms.CenterCrop(self.input_height),
+                transforms.Resize(int(self.input_height * 1.1), interpolation=InterpolationMode.BICUBIC),
+                transforms.CenterCrop(self.input_height),
                 self.final_transform,
             ]
         )

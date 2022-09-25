@@ -14,10 +14,10 @@ class PatchMaskingMultiviewTransform(MultiviewTransform):
         num_patches = self.num_patches
         num_keep = int(num_patches * (1 - self.mask_ratio))
 
-        idx_keep = torch.randperm(num_patches, device=sample.device)[:, :num_keep * 2]  # [B, len_keep * 2]
-        idx_keep1 = idx_keep[:, :num_keep]  # [B, len_keep]
-        idx_keep2 = idx_keep[:, num_keep:]  # [B, len_keep]
-        idx_keep1 = idx_keep1.sort(dim=1)[0]
-        idx_keep2 = idx_keep2.sort(dim=1)[0]
+        idx_keep = torch.randperm(num_patches, device=sample.device)[:num_keep * 2]
+        idx_keep1 = idx_keep[:num_keep]
+        idx_keep2 = idx_keep[num_keep:]
+        idx_keep1 = idx_keep1.sort()[0]
+        idx_keep2 = idx_keep2.sort()[0]
 
         return [(sample, idx_keep1), (sample, idx_keep2)]

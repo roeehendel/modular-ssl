@@ -1,39 +1,22 @@
+import argparse
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import pytorch_lightning as pl
 import torch
-import torch.nn.functional as F
-import torchmetrics
+from pl_bolts.optimizers import linear_warmup_decay
 from torch import nn, Tensor
 
 from transforms.multi_view.branches_views_transform import BranchesViewsTransform
 
 
-def knn_predict(embeddings, train_embeddings, train_labels, k: int = 1):
-    batch_size = embeddings.size(0)
-
-    dist = torch.mm(embeddings, train_embeddings.T)
-    yd, yi = dist.topk(k, dim=1, largest=True, sorted=True)
-    candidates = train_labels.view(1, -1).expand(batch_size, -1)
-    predictions = torch.gather(candidates, 1, yi)
-    predictions = predictions.narrow(1, 0, 1).clone().view(-1)
-
-    return predictions
-
-
 class JointEmbeddingMethod(pl.LightningModule, ABC):
-    def __init__(self, encoder: nn.Module, embedding_dim: int, knn_k: int = 20, **kwargs):
+    def __init__(self, encoder: nn.Module, embedding_dim: int, **kwargs):
         super().__init__()
 
         self.save_hyperparameters(ignore=["encoder"])
 
         self.encoder = encoder
-
-        self.accuracy = torchmetrics.Accuracy()
-
-        self._train_embeddings = []
-        self._train_labels = []
 
     @abstractmethod
     def branches_views_transform(self, input_height: int, normalization: Optional = None) -> BranchesViewsTransform:
@@ -51,6 +34,9 @@ class JointEmbeddingMethod(pl.LightningModule, ABC):
     def batch_size(self) -> int:
         return self.trainer.datamodule.train_dataloader().batch_size * self.trainer.num_devices
 
+    def forward(self, *args, **kwargs):
+        return self.encoder(*args, **kwargs)
+
     def forward_branches(self, branches_views: list[list[Tensor]]) -> list[list[Tensor]]:
         branches_outputs = []
         for branch_idx, branch_views in enumerate(branches_views):
@@ -61,17 +47,6 @@ class JointEmbeddingMethod(pl.LightningModule, ABC):
 
         return branches_outputs
 
-    def forward_eval_embeddings(self, eval_view) -> Tensor:
-        with torch.no_grad():
-            self.encoder.eval()
-            embeddings = self.encoder(eval_view)
-            self.encoder.train()
-        return embeddings
-
-    def on_train_epoch_start(self) -> None:
-        self._train_embeddings = []
-        self._train_labels = []
-
     def training_step(self, batch, batch_idx) -> Tensor:
         views, labels = batch
         branches_views, eval_view = views
@@ -80,34 +55,66 @@ class JointEmbeddingMethod(pl.LightningModule, ABC):
         loss = self.forward_loss(branches_outputs)
         self.log_dict({"train_loss": loss})
 
-        # TODO: replace the list with a pre-initialized tensor
-        embeddings = self.forward_eval_embeddings(eval_view)
-        embeddings = F.normalize(embeddings, dim=1)
-        self._train_embeddings.append(embeddings.detach().cpu())
-        self._train_labels.append(labels.detach().cpu())
-
         return loss
 
-    def on_validation_epoch_start(self) -> None:
-        if len(self._train_embeddings):
-            self._train_embeddings = torch.cat(self._train_embeddings, dim=0).to(self.device)
-            self._train_labels = torch.cat(self._train_labels, dim=0).to(self.device)
+    def validation_step(self, *args, **kwargs) -> None:
+        pass
 
-    def validation_step(self, batch, batch_idx) -> None:
-        if len(self._train_embeddings):
-            views, labels = batch
+    def configure_optimizers(self):
+        hparams = self.hparams
 
-            embeddings = self.encoder(views)
-            labels = labels
+        lr = hparams.base_lr * self.batch_size / 256.0
 
-            # predictions = knn_predict(embeddings, self._train_embeddings, self._train_labels, k=self.hparams.knn_k)
+        if hparams.optimizer == "sgd":
+            optimizer = torch.optim.SGD(
+                self.parameters(),
+                lr=lr, momentum=hparams.momentum, weight_decay=hparams.weight_decay
+            )
+        elif hparams.optimizer == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=lr, weight_decay=hparams.weight_decay
+            )
+        elif hparams.optimizer == "adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=lr, weight_decay=hparams.weight_decay
+            )
+        else:
+            raise ValueError(f"Unknown optimizer: {hparams.optimizer}")
 
-            batch_size = embeddings.size(0)
-            dist = torch.mm(embeddings, self._train_embeddings.T)
-            yd, yi = dist.topk(self.hparams.knn_k, dim=1, largest=True, sorted=True)
-            candidates = self._train_labels.view(1, -1).expand(batch_size, -1)
-            predictions = torch.gather(candidates, 1, yi)
-            predictions = predictions.narrow(1, 0, 1).clone().view(-1)
+        total_steps = self.trainer.estimated_stepping_batches
+        warmup_steps = (hparams.warmup_epochs / self.trainer.max_epochs) * total_steps
 
-            self.accuracy(predictions, labels)
-            self.log('val_acc', self.accuracy, on_step=False, on_epoch=True, prog_bar=True)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": torch.optim.lr_scheduler.LambdaLR(
+                    optimizer,
+                    linear_warmup_decay(warmup_steps, total_steps, cosine=True),
+                ),
+                "interval": "step",
+                "frequency": 1,
+            }
+        }
+
+    @staticmethod
+    def add_model_specific_args(parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        parser = parent_parser.add_argument_group('JointEmbeddingMethod')
+
+        parser.add_argument('--optimizer', type=str, default='sgd')
+        temp_args, _ = parent_parser.parse_known_args()
+        if temp_args.optimizer == 'sgd':
+            parser.add_argument('--base_lr', type=float, default=0.025)
+            parser.add_argument('--momentum', type=float, default=0.9)
+        elif temp_args.optimizer == 'adamw':
+            parser.add_argument('--base_lr', type=float, default=5e-5)
+        elif temp_args.optimizer == 'adam':
+            parser.add_argument('--base_lr', type=float, default=5e-5)
+        else:
+            raise ValueError(f"Unknown optimizer {temp_args.optimizer}")
+
+        parser.add_argument('--weight_decay', type=float, default=0)
+        parser.add_argument('--warmup_epochs', type=int, default=0)
+
+        return parent_parser

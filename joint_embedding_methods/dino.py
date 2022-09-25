@@ -5,11 +5,12 @@ import numpy as np
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-from pl_bolts.optimizers import linear_warmup_decay
 from torch import nn, Tensor
 from torch.nn.init import trunc_normal_
 
 from joint_embedding_methods.joint_embedding_method import JointEmbeddingMethod
+from joint_embedding_methods.utils.freeze_module import freeze_module
+from joint_embedding_methods.utils.momentum_update import momentum_update
 from transforms.multi_view.branches_views_transform import BranchesViewsTransform
 from transforms.multi_view.iid_multiview_transform import IIDMultiviewTransform
 from transforms.single_view.simclr_transform import SimCLRTransform
@@ -24,12 +25,10 @@ class DINO(JointEmbeddingMethod):
 
         self.student = nn.Sequential(
             encoder,
-            DINOHead(hparams.embedding_dim, hparams.out_dim, hparams.use_bn_in_head,
-                     hparams.norm_last_layer)
+            DINOHead(hparams.embedding_dim, hparams.out_dim, hparams.use_bn_in_head, hparams.norm_last_layer)
         )
         self.teacher = copy_module_with_weight_norm(self.student)
-        # for p in self.teacher.parameters():
-        #     p.requires_grad = False
+        freeze_module(self.teacher)
 
         self.criterion = DINOLoss(
             out_dim=hparams.out_dim,
@@ -51,7 +50,7 @@ class DINO(JointEmbeddingMethod):
             gaussian_blur=hparams.gaussian_blur,
             jitter_strength=hparams.jitter_strength,
             normalize=normalization,
-            crop_scale=(0.5, 1.0)
+            crop_scale=(0.2, 1.0)
         )
 
         multicrop_transform = SimCLRTransform(
@@ -71,11 +70,7 @@ class DINO(JointEmbeddingMethod):
         )
 
     def training_step_end(self, step_output):
-        pass
-        # with torch.no_grad():
-        #     m = self._teacher_momentum()
-        #     for param_q, param_k in zip(self.student.parameters(), self.teacher.parameters()):
-        #         param_k.data.mul_(m).add_((1 - m) * param_q.detach().data)
+        momentum_update(self.student, self.teacher, self._teacher_momentum())
 
     def _teacher_momentum(self):
         # TODO: implement cosine scheduler that goes from 0.996 to 1
@@ -92,33 +87,6 @@ class DINO(JointEmbeddingMethod):
         student_output, teacher_output = branches_outputs
         loss = self.criterion(student_output, teacher_output, self.current_epoch)
         return loss
-
-    def configure_optimizers(self):
-        hparams = self.hparams
-
-        lr = hparams.base_lr * self.batch_size / 256
-
-        optimizer = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=hparams.weight_decay)
-        # optimizer = torch.optim.SGD(self.parameters(), lr=lr, momentum=hparams.momentum,
-        #                             weight_decay=hparams.weight_decay)
-
-        total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = (hparams.warmup_epochs / self.trainer.max_epochs) * total_steps
-
-        # TODO: remove this !!!
-        # self.trainer.datamodule.dataset_train = Subset(self.trainer.datamodule.dataset_train, [0])
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": torch.optim.lr_scheduler.LambdaLR(
-                    optimizer,
-                    linear_warmup_decay(warmup_steps, total_steps, cosine=True),
-                ),
-                "interval": "step",
-                "frequency": 1,
-            }
-        }
 
     @staticmethod
     def add_model_specific_args(parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -142,11 +110,9 @@ class DINO(JointEmbeddingMethod):
         parser.add_argument("--teacher_temp_warmup_epochs", type=int, default=30)
         parser.add_argument("--teacher_momentum", type=float, default=0.996)
 
-        # Optimizer
-        parser.add_argument("--base_lr", type=float, default=5e-4)
-        parser.add_argument("--weight_decay", type=float, default=0.04)
-        parser.add_argument("--warmup_epochs", type=int, default=10)
-        # parser.add_argument('--momentum', type=float, default=0.9)
+        # Optimization
+        parser.set_defaults(optimizer="adamw")
+        parser.set_defaults(base_lr=5e-4, weight_decay=0.04, warmup_epochs=10)
 
         return parent_parser
 
@@ -228,11 +194,6 @@ class DINOLoss(nn.Module):
                 if iv == it:
                     # we skip cases where student and teacher operate on the same view
                     continue
-                # print('teacher')
-                # print(q)
-                # print('student')
-                # print(torch.softmax(v, dim=-1))
-
                 loss = torch.sum(-q * F.log_softmax(v, dim=-1), dim=-1)
                 total_loss += loss.mean()
                 n_loss_terms += 1

@@ -1,8 +1,6 @@
 import argparse
 from typing import Optional
 
-import torch
-from pl_bolts.optimizers import linear_warmup_decay
 from torch import nn, Tensor
 
 from joint_embedding_methods.joint_embedding_method import JointEmbeddingMethod
@@ -42,42 +40,6 @@ class SimSiam(JointEmbeddingMethod):
     def forward_loss(self, branches_outputs: list[list[Tensor]]) -> Tensor:
         return self._loss(branches_outputs)
 
-    def configure_optimizers(self):
-        hparams = self.hparams
-
-        lr = hparams.base_lr * self.batch_size / 256
-
-        if hparams.optimizer == "sgd":
-            optimizer = torch.optim.SGD(
-                self.parameters(),
-                lr=lr, momentum=hparams.momentum, weight_decay=hparams.weight_decay
-            )
-        elif hparams.optimizer == "adamw":
-            optimizer = torch.optim.AdamW(
-                self.parameters(),
-                lr=lr, weight_decay=hparams.weight_decay
-            )
-        elif hparams.optimizer == "adam":
-            optimizer = torch.optim.Adam(
-                self.parameters(),
-                lr=lr, weight_decay=hparams.weight_decay
-            )
-
-        total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = (hparams.warmup_epochs / self.trainer.max_epochs) * total_steps
-
-        return {
-            "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": torch.optim.lr_scheduler.LambdaLR(
-                    optimizer,
-                    linear_warmup_decay(warmup_steps, total_steps, cosine=True),
-                ),
-                "interval": "step",
-                "frequency": 1,
-            }
-        }
-
     @staticmethod
     def add_model_specific_args(parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         parser = parent_parser.add_argument_group('SimSiam')
@@ -92,20 +54,15 @@ class SimSiam(JointEmbeddingMethod):
         parser.add_argument('--output_dim', type=int, default=2048)
 
         # Optimization
-        parser.add_argument('--optimizer', type=str, default='sgd')
         temp_args, _ = parent_parser.parse_known_args()
         if temp_args.optimizer == 'sgd':
-            parser.add_argument('--base_lr', type=float, default=0.025)
-            parser.add_argument('--momentum', type=float, default=0.9)
+            parser.set_defaults(base_lr=0.025, momentum=0.9)
         elif temp_args.optimizer == 'adamw':
-            parser.add_argument('--base_lr', type=float, default=5e-5)
+            parser.set_defaults(base_lr=5e-5)
         elif temp_args.optimizer == 'adam':
-            parser.add_argument('--base_lr', type=float, default=5e-5)
-        else:
-            raise ValueError(f"Unknown optimizer {temp_args.optimizer}")
+            parser.set_defaults(base_lr=5e-5)
 
-        parser.add_argument('--weight_decay', type=float, default=5e-4)
-        parser.add_argument('--warmup_epochs', type=int, default=0)
+        parser.set_defaults(weight_decay=5e-4, warmup_epochs=0)
 
         return parent_parser
 
