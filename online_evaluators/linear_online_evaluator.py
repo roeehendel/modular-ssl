@@ -13,17 +13,17 @@ from online_evaluators.online_evalutaor import OnlineEvaluator, NamedMetric
 class LinearProbeOnlineEvaluator(OnlineEvaluator):
     """Attaches a MLP for fine-tuning using the standard self-supervised protocol. """
 
-    def __init__(self, embedding_dim: int, num_classes: int, drop_p: float = 0.0, hidden_dim: Optional[int] = None,
+    def __init__(self, embed_dim: int, num_classes: int, drop_p: float = 0.0, hidden_dim: Optional[int] = None,
                  probe_training_epochs: int = 10):
         super().__init__()
-        self.embedding_dim = embedding_dim
+        self.embed_dim = embed_dim
         self.num_classes: Optional[int] = num_classes
         self.drop_p = drop_p
         self.hidden_dim = hidden_dim
         self.probe_training_epochs = probe_training_epochs
 
         self.online_evaluator = SSLEvaluator(
-            n_input=self.embedding_dim,
+            n_input=self.embed_dim,
             n_classes=self.num_classes,
             p=self.drop_p,
             n_hidden=self.hidden_dim,
@@ -53,7 +53,10 @@ class LinearProbeOnlineEvaluator(OnlineEvaluator):
                 batch_embeddings = train_embeddings[batch_idx:batch_idx + batch_size]
                 batch_labels = train_labels[batch_idx:batch_idx + batch_size]
                 self.optimizer.zero_grad()
-                predictions, mlp_loss = self._shared_step(batch_embeddings, batch_labels)
+
+                with torch.enable_grad():
+                    predictions, mlp_loss = self._shared_step(batch_embeddings, batch_labels)
+
                 mlp_loss.backward()
                 self.optimizer.step()
 

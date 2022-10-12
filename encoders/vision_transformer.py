@@ -1,22 +1,29 @@
 from functools import partial
+from typing import Type
 
 import torch.nn as nn
 from timm.models.vision_transformer import VisionTransformer
 
-
-def vit_micro(img_size: int = 224, patch_size: int = 16, **kwargs):
-    model = VisionTransformer(
-        img_size=img_size, patch_size=patch_size, num_classes=0,
-        embed_dim=384, depth=7, num_heads=12, mlp_ratio=2,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
-    )
-    return model
+import encoders
+from encoders.base_vision_transformer import VARIANTS_KWARGS, BaseViT
 
 
-def vit_tiny(img_size: int = 224, patch_size: int = 16, **kwargs):
-    model = VisionTransformer(
-        img_size=img_size, patch_size=patch_size, num_classes=0,
-        embed_dim=192, depth=12, num_heads=3, mlp_ratio=4,
-        norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs
-    )
-    return model
+@encoders.registry.register("vit")
+class ViT(VisionTransformer, BaseViT):
+    def __init__(self, variant: str, img_size: int, patch_size: int, **kwargs):
+        self.variant = variant
+        super().__init__(
+            img_size=img_size, patch_size=patch_size, num_classes=0,
+            norm_layer=partial(nn.LayerNorm, eps=1e-6),
+            **VARIANTS_KWARGS[variant],
+        )
+        self.num_patches = self.patch_embed.num_patches
+
+    def embedding_dim(self) -> int:
+        return self.embed_dim
+
+    def activation_fn(self) -> Type[nn.Module]:
+        return nn.GELU
+
+    def full_name(self) -> str:
+        return f"vit_{self.variant}"

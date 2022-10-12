@@ -1,9 +1,8 @@
 import argparse
 from argparse import ArgumentParser
-from typing import Type
 
-from pl_bolts.models.self_supervised.resnets import BasicBlock, Bottleneck
-from pl_bolts.models.self_supervised.resnets import ResNet as _ResNet
+from timm.models import BasicBlock, Bottleneck
+from timm.models import ResNet as TimmResNet
 from torch import nn
 
 import encoders
@@ -17,14 +16,20 @@ _VARIANTS_KWARGS = {
 }
 
 
-@encoders.registry.register("resnet")
-class ResNet(_ResNet, Encoder):
-    def __init__(self, variant: str, cifar_stem: bool = False, *args, **kwargs):
-        super().__init__(first_conv=not cifar_stem, maxpool1=not cifar_stem, **_VARIANTS_KWARGS[variant])
+@encoders.registry.register("timm_resnet")
+class TimmResNet(TimmResNet, Encoder):
+    def __init__(self, variant: str, cifar_stem: bool = False, **kwargs):
+        super().__init__(num_classes=0, **_VARIANTS_KWARGS[variant])
         self.variant = variant
+        if cifar_stem:
+            in_channels, out_channels = self.conv1.in_channels, self.conv1.out_channels
+            self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+            self.maxpool = nn.MaxPool2d(kernel_size=1, stride=1)
 
     def forward(self, x):
-        return super().forward(x)[0]
+        x = self.forward_features(x)
+        x = self.forward_head(x)
+        return x
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
@@ -39,11 +44,10 @@ class ResNet(_ResNet, Encoder):
 
         return parent_parser
 
+    @property
     def embedding_dim(self) -> int:
-        return self.fc.in_features
+        return self.num_features
 
-    def activation_fn(self) -> Type[nn.Module]:
-        return nn.ReLU
-
+    @property
     def full_name(self) -> str:
-        return f"resnet_{self.variant}"
+        return f"timm_resnet_{self.variant}"

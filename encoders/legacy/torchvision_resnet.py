@@ -1,15 +1,13 @@
 import argparse
 from argparse import ArgumentParser
-from typing import Type
 
-from pl_bolts.models.self_supervised.resnets import BasicBlock, Bottleneck
-from pl_bolts.models.self_supervised.resnets import ResNet as _ResNet
 from torch import nn
+from torchvision.models.resnet import ResNet, BasicBlock, Bottleneck
 
 import encoders
 from encoders.encoder import Encoder
 
-_VARIANTS_KWARGS = {
+VARIANTS_KWARGS = {
     "18": dict(block=BasicBlock, layers=[2, 2, 2, 2]),
     "34": dict(block=BasicBlock, layers=[3, 4, 6, 3]),
     "50": dict(block=Bottleneck, layers=[3, 4, 6, 3]),
@@ -17,20 +15,22 @@ _VARIANTS_KWARGS = {
 }
 
 
-@encoders.registry.register("resnet")
-class ResNet(_ResNet, Encoder):
-    def __init__(self, variant: str, cifar_stem: bool = False, *args, **kwargs):
-        super().__init__(first_conv=not cifar_stem, maxpool1=not cifar_stem, **_VARIANTS_KWARGS[variant])
-        self.variant = variant
-
-    def forward(self, x):
-        return super().forward(x)[0]
+@encoders.registry.register("torchvision_resnet")
+class TorchvisionResNetEncoder(ResNet, Encoder):
+    def __init__(self, variant: str, cifar_stem: bool = False, **kwargs):
+        super().__init__(num_classes=0, **VARIANTS_KWARGS[variant])
+        self._embed_dim = self.fc.in_features
+        self.fc = nn.Identity()
+        if cifar_stem:
+            in_channels, out_channels = self.conv1.in_channels, self.conv1.out_channels
+            self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+            self.maxpool = nn.MaxPool2d(kernel_size=1, stride=1)
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
         parser = parent_parser.add_argument_group("ResNet")
 
-        parser.add_argument("--variant", type=str, default="18", choices=_VARIANTS_KWARGS.keys())
+        parser.add_argument("--variant", type=str, default="18", choices=VARIANTS_KWARGS.keys())
         parser.add_argument("--cifar_stem", action=argparse.BooleanOptionalAction)
 
         temp_args, _ = parent_parser.parse_known_args()
@@ -39,11 +39,6 @@ class ResNet(_ResNet, Encoder):
 
         return parent_parser
 
+    @property
     def embedding_dim(self) -> int:
-        return self.fc.in_features
-
-    def activation_fn(self) -> Type[nn.Module]:
-        return nn.ReLU
-
-    def full_name(self) -> str:
-        return f"resnet_{self.variant}"
+        return self._embed_dim
