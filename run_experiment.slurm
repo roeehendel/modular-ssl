@@ -22,8 +22,8 @@
 #SBATCH --exclude=n-601,rack-omerl-g01
 
 # CIFAR 10
-#python pretrain.py --batch_size=128 --method=simsiam --dataset=cifar10 --encoder_type=resnet --variant=18 --max_epochs=100
-python pretrain.py --batch_size=128 --method=vicreg --dataset=cifar10 --encoder_type=resnet --variant=18 --base_lr=0.001 --warmup_epochs=10
+python pretrain.py --batch_size=128 --method=simsiam --dataset=cifar10 --encoder_type=resnet --variant=18 --max_epochs=800
+# python pretrain.py --batch_size=128 --method=vicreg --dataset=cifar10 --encoder_type=resnet --variant=18 --base_lr=0.001 --warmup_epochs=10
 #python pretrain.py --batch_size=128 --method=dino --dataset=cifar10 --encoder_type=vit --variant=cifar10
 #python pretrain.py --batch_size=128 --method=simsiam --dataset=cifar10 --encoder_type=vit --variant=tiny --optimizer=adamw
 #python pretrain.py --batch_size=128 --method=dino --dataset=cifar10 --encoder_type=resnet --variant=18 --optimizer=sgd --base_lr=0.025 --momentum=0.9 --weight_decay=5e-4 --warmup_epochs=0

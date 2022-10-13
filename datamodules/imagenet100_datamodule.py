@@ -14,6 +14,9 @@ class Imagenet100DataModule(ImagenetDataModule):
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
-        parser = super().add_argparse_args(parent_parser, **kwargs)
-        parser.set_defaults(data_dir=os.path.join(DATASETS_DIR, 'ilsvrc100'))
-        return parser
+        parent_parser = super().add_argparse_args(parent_parser)
+        parser = parent_parser.add_argument_group(cls.__name__)
+
+        parser.add_argument("--dataset_dir", type=str, default=os.path.join(DATASETS_DIR, 'ilsvrc100'))
+
+        return parent_parser

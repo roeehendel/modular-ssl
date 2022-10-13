@@ -27,7 +27,7 @@ class DummyDataModule(SSLDataModule):
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
         parent_parser = super().add_argparse_args(parent_parser)
-        parser = parent_parser.add_argument_group(cls.__class__.__name__)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         parser.add_argument("--train_samples", type=int, default=1_281_167, help="number of train samples to use")
         parser.add_argument("--img_dims", type=ImageDims, default=ImageDims(3, 224, 224), help="image dimensions")

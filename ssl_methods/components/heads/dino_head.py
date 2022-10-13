@@ -26,12 +26,14 @@ class DINOHead(nn.Module):
     @classmethod
     def add_argparse_args(cls, parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         parser = parent_parser.add_argument_group(cls.__name__)
+
         parser.add_argument("--output_dim", type=int, default=65536)
         parser.add_argument("--hidden_dim", type=int, default=2048)
         parser.add_argument("--bottleneck_dim", type=int, default=256)
         parser.add_argument("--use_bn", action=argparse.BooleanOptionalAction)
         parser.add_argument("--norm_last_layer", action=argparse.BooleanOptionalAction)
         parser.set_defaults(use_bn=False, norm_last_layer=True)
+
         return parent_parser
 
     def forward(self, x):

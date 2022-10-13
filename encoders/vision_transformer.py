@@ -25,5 +25,5 @@ class ViT(VisionTransformer, BaseViT):
     def activation_fn(self) -> Type[nn.Module]:
         return nn.GELU
 
-    def full_name(self) -> str:
+    def __str__(self) -> str:
         return f"vit_{self.variant}"
