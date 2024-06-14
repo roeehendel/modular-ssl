@@ -16,7 +16,7 @@ class SpatialTransform(object):
 
     @classmethod
     def add_argparse_args(cls, parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        parser = parent_parser.add_argument_group("SpatialTransform")
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         parser.add_argument("--crop_size", type=int, default=224)
         parser.add_argument("--crop_scale", type=float, nargs='+', default=(0.2, 1.0))

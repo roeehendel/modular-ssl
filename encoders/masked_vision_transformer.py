@@ -40,7 +40,7 @@ class MaskedEncoderViT(ViT):
         x = self.norm(x)
         return x
 
-    def full_name(self) -> str:
+    def __str__(self) -> str:
         return f"masked_encoder_vit_{self.variant}"
 
 

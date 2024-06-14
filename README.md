@@ -1,1 +1,1 @@
-# SSL Method in Pytorch with Lightning
+# SSL Methods in Pytorch with Lightning

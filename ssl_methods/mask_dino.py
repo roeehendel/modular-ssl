@@ -6,14 +6,13 @@ from torch import Tensor
 from torchvision.transforms import transforms
 
 import ssl_methods
-from encoders.encoder import Encoder
 from encoders.masked_vision_transformer import MaskedDecoderViT
 from ssl_methods.components.branches.mask_dino_student import MaskDINOStudent
 from ssl_methods.components.branches.mask_dino_teacher import MaskDINOTeacher
 from ssl_methods.components.heads.dino_head import DINOHead
 from ssl_methods.components.losses.dino_loss import DINOLoss
 from ssl_methods.dino import cosine_scheduler
-from ssl_methods.ssl_method import SSLMethod
+from ssl_methods.multiview_ssl_method import MultiviewSSLMethod
 from transforms.branches_transform import BranchesTransform, TargetedMultiviewTransformPipeline
 from transforms.multi_view.duplicate_transform import DuplicateTransform
 from transforms.multi_view.patch_masking_multiview_transform import PatchMaskingMultiviewTransform
@@ -25,26 +24,27 @@ from utils.nn_utils.momentum_update import momentum_update
 
 
 @ssl_methods.registry.register("mask_dino")
-class MaskDINO(SSLMethod):
-    def __init__(self, encoder: Encoder, **kwargs):
-        super().__init__(encoder, **kwargs)
+class MaskDINO(MultiviewSSLMethod):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         hparams = self.hparams
 
         decoder = MaskedDecoderViT(**hparams)
-        head = DINOHead(input_dim=encoder.embedding_dim(), **hparams)
+        head = DINOHead(input_dim=self.encoder.embedding_dim(), **hparams)
 
-        self._student = MaskDINOStudent(encoder, decoder, head)
-        self._teacher = MaskDINOTeacher(module_deepcopy(encoder), module_deepcopy(head))
+        self._student = MaskDINOStudent(self.encoder, decoder, head)
+        self._teacher = MaskDINOTeacher(module_deepcopy(self.encoder), module_deepcopy(head))
         freeze_module(self._teacher)
 
         self.criterion = DINOLoss(**hparams)
 
         self.momentum_schedule = None
 
-    @staticmethod
-    def add_argparse_args(parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        parser = parent_parser.add_argument_group("MaskDINO")
+    @classmethod
+    def add_argparse_args(cls, parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        parent_parser = super().add_argparse_args(parent_parser)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         # Augmentations
         parent_parser = SpatialTransform.add_argparse_args(parent_parser)
@@ -63,7 +63,7 @@ class MaskDINO(SSLMethod):
 
         return parent_parser
 
-    def branches_views_transform(self, normalization: Optional = None) -> BranchesTransform:
+    def pretrain_transform(self, normalization: Optional = None) -> BranchesTransform:
         hparams = self.hparams
 
         num_patches = self.encoder.patch_embed.num_patches

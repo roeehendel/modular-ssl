@@ -1,6 +1,6 @@
 import argparse
 from collections import OrderedDict
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -11,7 +11,7 @@ import ssl_methods
 from encoders.encoder import Encoder
 from ssl_methods.components.heads.dino_head import DINOHead
 from ssl_methods.components.losses.dino_loss import DINOLoss
-from ssl_methods.ssl_method import SSLMethod
+from ssl_methods.multiview_ssl_method import MultiviewSSLMethod
 from transforms.branches_transform import BranchesTransform, TargetedMultiviewTransformPipeline
 from transforms.multi_view.duplicate_transform import DuplicateTransform
 from transforms.single_view.color_transform import ColorTransform
@@ -23,15 +23,15 @@ from utils.nn_utils.momentum_update import momentum_update
 
 
 @ssl_methods.registry.register("dino")
-class DINO(SSLMethod):
-    def __init__(self, encoder: Encoder, **kwargs):
-        super().__init__(encoder, **kwargs)
+class DINO(MultiviewSSLMethod):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         hparams = self.hparams
 
-        head = DINOHead(input_dim=encoder.embedding_dim(), **hparams)
+        head = DINOHead(input_dim=self.encoder.embedding_dim(), **hparams)
 
-        self._student = nn.Sequential(OrderedDict(encoder=encoder, head=head))
+        self._student = nn.Sequential(OrderedDict(encoder=self.encoder, head=head))
         self._teacher = module_deepcopy(self._student)
         freeze_module(self._teacher)
 
@@ -39,9 +39,10 @@ class DINO(SSLMethod):
 
         self._teacher_momentum_schedule = None
 
-    @staticmethod
-    def add_argparse_args(parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        parser = parent_parser.add_argument_group("DINO")
+    @classmethod
+    def add_argparse_args(cls, parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+        parent_parser = super().add_argparse_args(parent_parser)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         # Augmentations
         parent_parser = StandardAugmentationsTransform.add_argparse_args(parent_parser)
@@ -58,7 +59,7 @@ class DINO(SSLMethod):
 
         return parent_parser
 
-    def branches_views_transform(self, normalization: Optional = None) -> BranchesTransform:
+    def pretrain_transform(self, normalization: Optional[Callable] = None) -> BranchesTransform:
         hparams = self.hparams
 
         transform_params = vars(hparams)

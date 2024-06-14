@@ -1,1 +1,0 @@
-nohup python pretrain.py --max-epochs=100 --accelerator=gpu --devices=4 --strategy=ddp > out.txt 2>&1 &

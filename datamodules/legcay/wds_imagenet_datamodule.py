@@ -23,11 +23,10 @@ class WDSImagenetDataModule(BaseImagenetDataModule):
         self.training_urls = os.path.join(bucket, shards)
         self.val_urls = os.path.join(bucket, valshards)
 
-
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
-        parent_parser = super().add_argparse_args(parent_parser, **kwargs)
-        parser = parent_parser.add_argument_group(cls.__class__.__name__)
+        parent_parser = super().add_argparse_args(parent_parser)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         parser.add_argument("--bucket", default="/home/gamir/hendel/datasets/ilsvrc/shards")
         parser.add_argument("--shards", default="imagenet-train-{000000..000146}.tar")

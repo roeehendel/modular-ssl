@@ -44,8 +44,8 @@ class SSLDataModule(LightningDataModule, ABC):
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
-        # parent_parser = super().add_argparse_args(parent_parser)
-        parser = parent_parser.add_argument_group(cls.__class__.__name__)
+        parent_parser = super().add_argparse_args(parent_parser)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         parser.add_argument("--batch_size", type=int, default=128, help="batch size per gpu")
         parser.add_argument("--val_batch_size", type=int, default=None, help="batch size per gpu for validation")

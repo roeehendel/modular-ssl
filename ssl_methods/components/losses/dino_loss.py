@@ -22,12 +22,14 @@ class DINOLoss(nn.Module):
 
     @classmethod
     def add_argparse_args(cls, parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        parser = parent_parser.add_argument_group("DINOLoss")
+        parser = parent_parser.add_argument_group(cls.__name__)
+
         parser.add_argument("--teacher_start_temp", type=float, default=0.04)
         parser.add_argument("--teacher_temp", type=float, default=0.07)
         parser.add_argument("--teacher_temp_warmup_epochs", type=int, default=30)
         parser.add_argument("--student_temp", type=float, default=0.1)
         parser.add_argument("--center_momentum", type=float, default=0.9)
+
         return parent_parser
 
     def forward(self, branches_outputs: list[list[Tensor]], epoch: int):

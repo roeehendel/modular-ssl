@@ -26,12 +26,14 @@ class ColorTransform(object):
 
     @classmethod
     def add_argparse_args(cls, parent_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-        parser = parent_parser.add_argument_group("ColorTransform")
+        parser = parent_parser.add_argument_group(cls.__name__)
+
         parser.add_argument("--jitter_p", type=float, default=0.8)
         parser.add_argument("--jitter_strength", type=float, default=0.5)
         parser.add_argument("--grayscale_p", type=float, default=0.2)
         parser.add_argument("--gaussian_blur_p", type=float, default=0.0)
         parser.add_argument("--solarize_p", type=float, default=0.0)
+
         return parent_parser
 
     def __call__(self, sample):

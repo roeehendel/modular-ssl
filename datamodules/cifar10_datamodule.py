@@ -34,11 +34,13 @@ class CIFAR10DataModule(SSLDataModule):
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
         parent_parser = super().add_argparse_args(parent_parser)
-        parser = parent_parser.add_argument_group(cls.__class__.__name__)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
-        parser.add_argument("--data_dir", type=str, default=os.path.join(DATASETS_DIR, 'cifar10'), help="Path to data")
-        parser.add_argument("--val_split", type=int, default=5000, help="Number of samples in validation set")
-        parser.add_argument("--seed", type=int, default=42, help="Seed for random number generator")
+        parser.set_defaults(
+            data_dir=os.path.join(DATASETS_DIR, 'cifar10'),
+            val_split=5000,
+            seed=42,
+        )
 
         return parent_parser
 

@@ -28,7 +28,8 @@ class TorchvisionResNetEncoder(ResNet, Encoder):
 
     @classmethod
     def add_argparse_args(cls, parent_parser: ArgumentParser, **kwargs) -> ArgumentParser:
-        parser = parent_parser.add_argument_group("ResNet")
+        parent_parser = super().add_argparse_args(parent_parser)
+        parser = parent_parser.add_argument_group(cls.__name__)
 
         parser.add_argument("--variant", type=str, default="18", choices=VARIANTS_KWARGS.keys())
         parser.add_argument("--cifar_stem", action=argparse.BooleanOptionalAction)
